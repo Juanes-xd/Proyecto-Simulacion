@@ -4,11 +4,11 @@ import matplotlib.pyplot as plt
 # Tamaño físico del dominio
 Lx, Ly = 400, 40   # ancho y alto
 
-# Número de divisiones (menos que 400x40)
-Nx, Ny = 80, 10    # nodos en x e y
-
-# Espaciamiento
-hx, hy = Lx/(Nx-1), Ly/(Ny-1)
+# Elegimos Nx y calculamos Ny para celdas cuadradas
+Nx = 100
+hx = Lx/(Nx-1)
+hy = hx
+Ny = int(round(1 + Ly/hy))
 
 # Coordenadas de la malla
 x = np.linspace(0, Lx, Nx)
@@ -24,17 +24,12 @@ ix1, ix2 = int(180/Lx*(Nx-1)), int(220/Lx*(Nx-1))
 jy1, jy2 = 0, int(10/Ly*(Ny-1))   # altura ~10
 domain[jy1:jy2+1, ix1:ix2+1] = 0
 
-# Viga superior derecha
-# ...existing code...
-
 # Viga superior derecha (pegada a la pared derecha)
-ix1 = int(360/Lx*(Nx-1))  # Ajusta el inicio más a la derecha
-ix2 = Nx-1                # Hasta el borde derecho
+ix1 = int(360/Lx*(Nx-1))
+ix2 = Nx-1
 jy1 = int(30/Ly*(Ny-1))
 jy2 = Ny-1
 domain[jy1:jy2+1, ix1:ix2+1] = 0
-
-# ...existing code...
 
 # --- Puntos representativos (aprox en la malla reducida) ---
 points = {
@@ -66,7 +61,7 @@ plt.scatter(X, Y, s=10, color='blue', alpha=0.6)
 for name, (px, py) in points.items():
     plt.scatter(x[px], y[py], color='red', s=50, label=name)
 
-plt.title(f"Malla reducida {Ny}x{Nx} (dominio 40x400)")
+plt.title(f"Malla cuadrada {Ny}x{Nx} (dominio 40x400)")
 plt.xlabel("x")
 plt.ylabel("y")
 plt.legend(loc="upper right", fontsize=7)
