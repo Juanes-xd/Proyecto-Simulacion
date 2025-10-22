@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.sparse import lil_matrix
+from numpy.linalg import cond
 
 # --- PARÁMETROS GLOBALES Y GEOMETRÍA ---
 NY, NX = 5, 50      # Filas (y=altura) x Columnas (x=ancho)
@@ -49,6 +51,51 @@ class FlujoGaussSeidel:
         
     def _map_to_linear_index(self, i, j):
         return self._incognita_map.get((i, j), None)
+
+    def calcular_jacobiano(self, V_current):
+        """Calcula la matriz Jacobiana para el estado actual."""
+        J = lil_matrix((self.N_INCÓGNITAS, self.N_INCÓGNITAS))
+        
+        m = 0
+        for j in range(NY):
+            for i in range(NX):
+                
+                if not self._es_incognita(i, j):
+                    continue
+
+                # Valores de Vecinos
+                V_c = V_current[j, i]
+                V_r = V_current[j, i + 1]
+                V_l = V_current[j, i - 1]
+                
+                # --- Jacobiano (Derivadas Parciales) ---
+                
+                # Central (dF/dV_c)
+                J[m, m] = 4 + 4 * V_r - 4 * V_l
+                
+                # Derecha (dF/dV_r)
+                n_r = self._map_to_linear_index(i + 1, j)
+                if n_r is not None:
+                    J[m, n_r] = -1 + 4 * V_c
+                
+                # Izquierda (dF/dV_l)
+                n_l = self._map_to_linear_index(i - 1, j)
+                if n_l is not None:
+                    J[m, n_l] = -1 - 4 * V_c
+                    
+                # Superior (dF/dV_u)
+                n_u = self._map_to_linear_index(i, j + 1)
+                if n_u is not None:
+                    J[m, n_u] = -1 + 4 * VY_TEST
+                
+                # Inferior (dF/dV_d)
+                n_d = self._map_to_linear_index(i, j - 1)
+                if n_d is not None:
+                    J[m, n_d] = -1 - 4 * VY_TEST
+                
+                m += 1
+                
+        return J.tocsr()
 
     def _inicializar_matriz_velocidades(self, v_init):
         V_matrix = np.full((NY, NX), v_init)
@@ -125,6 +172,13 @@ class FlujoGaussSeidel:
 
             if max_cambio < TOLERANCE:
                 print(f"✅ Convergencia alcanzada en {k} iteraciones.")
+                
+                # Calcular número de condición de la Jacobiana al converger
+                print("\nCalculando número de condición de la Jacobiana...")
+                J = self.calcular_jacobiano(V_matrix)
+                J_dense = J.toarray()
+                numero_condicion = cond(J_dense)
+                print(f"📊 Número de condición de la Jacobiana: {numero_condicion:.2e}")
                 break
         
         return V_matrix
