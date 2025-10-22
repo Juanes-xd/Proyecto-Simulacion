@@ -7,7 +7,7 @@ from numpy.linalg import cond
 NY, NX = 5, 50      # Filas (y=altura) x Columnas (x=ancho)
 H = 8               # Paso de celda (h)
 VY_TEST = 0.1       # Valor de V_y (vorticidad/convección vertical)
-MAX_ITER =2000     # Iteraciones para asegurar convergencia (Gauss-Seidel necesita más)
+MAX_ITER = 3000     # Iteraciones para asegurar convergencia (Jacobi necesita más que Gauss-Seidel)
 TOLERANCE = 1e-8
 V0_INITIAL = 1.0    # Velocidad de entrada (valor de color 1.0)
 
@@ -20,7 +20,7 @@ VIGA_INF_X_MIN, VIGA_INF_X_MAX = 20, 30
 VIGA_SUP_Y_MIN, VIGA_SUP_Y_MAX = 4, 5
 VIGA_SUP_X_MIN, VIGA_SUP_X_MAX = 40, 50
 
-class FlujoGaussSeidel:
+class FlujoJacobi:
     def __init__(self):
         self._incognita_map = {} 
         self._preparar_mapa_incognitas()
@@ -124,11 +124,16 @@ class FlujoGaussSeidel:
         return V_matrix
 
     def solve(self):
-        """Método de Gauss-Seidel con relajación (SOR) para resolver el sistema no lineal."""
+        """Método de Jacobi para resolver el sistema no lineal.
+        
+        A diferencia de Gauss-Seidel, Jacobi usa TODOS los valores de la iteración anterior
+        para calcular los nuevos valores simultáneamente.
+        """
         V_matrix = self.V_k.copy()
         
         for k in range(1, MAX_ITER + 1):
             max_cambio = 0
+            V_new_matrix = V_matrix.copy()  # Crear copia para actualización simultánea
             
             # Barrido por todos los nodos incógnita
             for j in range(NY):
@@ -138,7 +143,7 @@ class FlujoGaussSeidel:
                     
                     V_c_old = V_matrix[j, i]
                     
-                    # Valores de vecinos (ya actualizados en Gauss-Seidel)
+                    # CLAVE: Valores de vecinos de la iteración ANTERIOR (V_matrix, no V_new_matrix)
                     V_r = V_matrix[j, i + 1]
                     V_l = V_matrix[j, i - 1]
                     V_u = V_matrix[j + 1, i]
@@ -146,7 +151,7 @@ class FlujoGaussSeidel:
                     
                     # Ecuación discretizada (no lineal):
                     # 4*V_c - (V_r + V_l + V_u + V_d) + 4*V_c*(V_r - V_l) + 4*VY_TEST*(V_u - V_d) = 0
-                    # Despejando V_c de forma iterativa (punto fijo simplificado):
+                    # Despejando V_c de forma iterativa (punto fijo):
                     # 4*V_c*(1 + V_r - V_l) = V_r + V_l + V_u + V_d - 4*VY_TEST*(V_u - V_d)
                     
                     denominador = 4 * (1 + V_r - V_l)
@@ -159,12 +164,15 @@ class FlujoGaussSeidel:
                     # Clipar para mantener límites físicos
                     V_c_new = np.clip(V_c_new, 0, V0_INITIAL)
                     
-                    # Actualizar el valor directamente (sin relajación)
-                    V_matrix[j, i] = V_c_new
+                    # ACTUALIZACIÓN JACOBI PURA: Guardar en matriz nueva (no sobrescribir)
+                    V_new_matrix[j, i] = V_c_new
                     
                     # Calcular cambio máximo
                     cambio = abs(V_c_new - V_c_old)
                     max_cambio = max(max_cambio, cambio)
+            
+            # Actualizar matriz completa después de calcular todos los valores
+            V_matrix = V_new_matrix
             
             # Imprimir progreso cada 50 iteraciones o si converge
             if k % 50 == 0 or max_cambio < TOLERANCE:
@@ -183,9 +191,9 @@ class FlujoGaussSeidel:
         
         # Si no convergió, mostrar mensaje
         if max_cambio >= TOLERANCE:
-            print(f"\n⚠️ ADVERTENCIA: El método de Gauss-Seidel NO convergió después de {MAX_ITER} iteraciones.")
+            print(f"\n⚠️ ADVERTENCIA: El método de Jacobi NO convergió después de {MAX_ITER} iteraciones.")
             print(f"   Cambio máximo final: {max_cambio:.10f} (tolerancia requerida: {TOLERANCE})")
-            print(f"   Esto indica que el método de Gauss-Seidel puro no es adecuado para este problema.")
+            print(f"   Esto indica que el método de Jacobi puro no es adecuado para este problema.")
         
         return V_matrix
 
@@ -212,7 +220,7 @@ def plot_solution(V_final, vy_value):
                               VIGA_SUP_Y_MAX - VIGA_SUP_Y_MIN, 
                               color='red', alpha=0.8, fill=True))
 
-    ax.set_title(f'Solución Final de V_x (Gauss-Seidel) | Vy={vy_value}')
+    ax.set_title(f'Solución Final de V_x (Jacobi Puro) | Vy={vy_value}')
     ax.set_xlabel('Índice de Columna (x)')
     ax.set_ylabel('Índice de Fila (y)')
     ax.set_xticks(range(0, NX + 1, 5))
@@ -229,9 +237,6 @@ def plot_solution(V_final, vy_value):
     for j in range(NY):
         for i in range(NX):
             valor = V_final[j, i]
-            # Detectar valores anómalos (muy diferentes de vecinos)
-            if valor > 0.5 and i > 35 and j > 2:
-                print(f"⚠️ Valor anómalo detectado en (i={i}, j={j}): V = {valor:.4f}")
             ax.text(i+0.5, j+0.5, f'{valor:.2f}', color='white', ha='center', va='center', fontsize=7)
 
     plt.tight_layout()
@@ -239,11 +244,13 @@ def plot_solution(V_final, vy_value):
 
 # --- EJECUCIÓN ---
 if __name__ == '__main__':
-    solver = FlujoGaussSeidel()
-    print(f"--- INICIANDO SIMULACIÓN CON GAUSS-SEIDEL (Vy={VY_TEST}) ---")
+    solver = FlujoJacobi()
+    print(f"--- INICIANDO SIMULACIÓN CON JACOBI PURO (Vy={VY_TEST}) ---")
     print(f"Número total de incógnitas a resolver: {solver.N_INCÓGNITAS}")
+    print(f"ℹ️  Método de Jacobi puro: Actualización SIMULTÁNEA usando valores de iteración anterior")
+    print(f"ℹ️  (Sin relajación - método estándar)")
     
     V_solution = solver.solve()
     
-    print("\nSimulación completada. Generando mapa de calor de la solución final (convergencia)...")
+    print("\nGenerando mapa de calor de la solución final...")
     plot_solution(V_solution, VY_TEST)
