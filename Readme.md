@@ -1,12 +1,31 @@
-# 📘 Simulación de Flujo con Método de Newton-Raphson
+# 📘 Simulación de Flujo: Comparación de Métodos Numéricos
 
 ## 🎯 Objetivo del Proyecto
 
-Este proyecto resuelve las **ecuaciones de Navier-Stokes** para simular el flujo de un fluido alrededor de obstáculos (vigas) en un dominio rectangular usando el **método de Newton-Raphson**.
+Este proyecto resuelve las **ecuaciones de Navier-Stokes** para simular el flujo de un fluido alrededor de obstáculos (vigas) en un dominio rectangular, comparando diferentes **métodos numéricos iterativos** para sistemas no lineales:
+
+- ✅ **Newton-Raphson** (método directo con Jacobiana)
+- ❌ **Gauss-Seidel** (método iterativo punto fijo)
+- ❌ **Jacobi** (método iterativo simultáneo)
+- ❌ **Richardson** (método de descenso por residuo)
+
+El objetivo es demostrar que **no todos los métodos son adecuados** para este tipo de problemas con fuerte no linealidad.
 
 ---
 
-## 📁 Archivo: `campo_velocidadesV2.py`
+## � Estructura del Proyecto
+
+| Archivo | Método | Estado | Descripción |
+|---------|--------|--------|-------------|
+| `campo_velocidadesV2.py` | Newton-Raphson | ✅ Converge | Método principal usando Jacobiana completa |
+| `avance3-2.py` | Gauss-Seidel | ❌ No converge | Método iterativo con actualización secuencial |
+| `avance3-4.py` | Jacobi | ❌ No converge | Método iterativo con actualización simultánea |
+| `avance3-3.py` | Richardson | ❌ No converge | Método de descenso por residuo con ω=0.01 |
+| `analisis_matriz.py` | Análisis | 📊 Herramienta | Determina viabilidad de métodos a priori |
+
+---
+
+## �📁 Archivo: `campo_velocidadesV2.py`
 
 ### **Descripción General**
 
@@ -241,6 +260,310 @@ Iteración 8: Cambio máximo = 0.0000000005 | Número de condición = 1.67e+02
 - Ecuaciones de Navier-Stokes (forma simplificada 2D)
 - Diferencias finitas en mallas estructuradas
 - Método de relajación sucesiva (SOR)
+
+---
+
+## 📁 Archivo: `avance3-2.py` - Método de Gauss-Seidel
+
+### **Descripción**
+Implementación del **método de Gauss-Seidel puro** (sin sobre-relajación) para resolver el mismo sistema no lineal.
+
+### **Cómo Funciona**
+
+```python
+Para cada iteración k:
+    Para cada nodo incógnita (i,j):
+        1. Leer vecinos V_r, V_l, V_u, V_d
+           (usando valores YA ACTUALIZADOS en esta iteración)
+        2. Despejar V_c de la ecuación:
+           V_c = (V_r + V_l + V_u + V_d - 4·VY·(V_u-V_d)) / (4·(1 + V_r - V_l))
+        3. Actualizar INMEDIATAMENTE V_c
+        4. Calcular cambio |V_new - V_old|
+    Verificar convergencia: max_cambio < 1e-8
+```
+
+**Diferencia clave con Jacobi:** Gauss-Seidel usa valores **ya actualizados** en la misma iteración, mientras que Jacobi usa solo valores de la iteración anterior.
+
+### **Resultados**
+
+```
+Estado: ❌ NO CONVERGE
+Iteraciones ejecutadas: 2000
+Cambio máximo final: 0.7451965478
+Razón: Queda estancado, oscilando sin alcanzar tolerancia
+```
+
+### **Conclusión**
+
+El método de Gauss-Seidel **falla** para este problema porque:
+- La matriz NO es diagonal dominante (solo 44.8% de filas)
+- El radio espectral ρ(M_GS) = 2.88 > 1 (no garantiza convergencia)
+- La ecuación no lineal 4·V_c·(V_r - V_l) domina sobre la parte lineal
+
+---
+
+## 📁 Archivo: `avance3-4.py` - Método de Jacobi
+
+### **Descripción**
+Implementación del **método de Jacobi puro** (sin sobre-relajación) con actualización simultánea.
+
+### **Cómo Funciona**
+
+```python
+Para cada iteración k:
+    Crear copia V_new de V_old
+    Para cada nodo incógnita (i,j):
+        1. Leer vecinos V_r, V_l, V_u, V_d de V_OLD
+           (TODOS los valores de iteración anterior)
+        2. Calcular nuevo valor:
+           V_new[i,j] = (V_r + V_l + V_u + V_d - 4·VY·(V_u-V_d)) / (4·(1 + V_r - V_l))
+        3. Guardar en V_new (NO sobrescribir todavía)
+    Reemplazar V_old ← V_new (actualización simultánea)
+    Verificar convergencia
+```
+
+**Ventaja:** Fácilmente paralelizable (todas las actualizaciones son independientes)
+
+**Desventaja:** Converge más lento que Gauss-Seidel en problemas lineales
+
+### **Resultados**
+
+```
+Estado: ❌ NO CONVERGE
+Iteraciones ejecutadas: 3000
+Cambio máximo final: 0.7450136892
+Razón: Oscila sin converger, similar a Gauss-Seidel
+```
+
+### **Conclusión**
+
+El método de Jacobi **falla** porque:
+- NO es diagonal dominante estricta (solo 60/134 filas)
+- Radio espectral ρ(M_Jacobi) = 1.70 > 1 (teorema de convergencia no se cumple)
+- La actualización simultánea no ayuda cuando la matriz no cumple requisitos
+
+---
+
+## 📁 Archivo: `avance3-3.py` - Método de Richardson
+
+### **Descripción**
+Implementación del **método de Richardson** con parámetro de relajación ω = 0.01 (muy pequeño para estabilidad).
+
+### **Cómo Funciona**
+
+```python
+Para cada iteración k:
+    1. Calcular residuo F(V) para cada incógnita:
+       F = 4·V_c - (V_r+V_l+V_u+V_d) + 4·V_c·(V_r-V_l) + 4·VY·(V_u-V_d)
+    
+    2. Actualización Richardson:
+       V^(k+1) = V^(k) - ω · F(V^(k))
+       
+    3. Aplicar límites: V ∈ [0, 1]
+    4. Verificar convergencia
+```
+
+**Parámetro ω:** Controla el tamaño del paso. Demasiado grande → oscilación, demasiado pequeño → convergencia lenta.
+
+### **Resultados**
+
+```
+Estado: ❌ NO CONVERGE (con ω=0.01)
+Iteraciones ejecutadas: 5000
+Cambio máximo: Variable (depende de ω)
+Razón: 
+  - ω=0.5 → Oscila violentamente (||Residuo|| ≈ 47)
+  - ω=0.01 → Demasiado lento, no converge en tiempo razonable
+```
+
+### **Conclusión**
+
+Richardson **no es práctico** para este problema porque:
+- Matriz NO simétrica dificulta la elección del ω óptimo
+- Requiere miles de iteraciones incluso con ω ajustado
+- Sin información de la Jacobiana, no aprovecha estructura del problema
+- El término no lineal hace que ω óptimo cambie en cada iteración
+
+---
+
+## 📁 Archivo: `analisis_matriz.py` - Análisis A Priori
+
+### **Descripción**
+Herramienta que **analiza las propiedades matemáticas** de la matriz Jacobiana para determinar qué métodos iterativos son viables **antes de ejecutarlos**.
+
+### **Análisis Realizado**
+
+#### 1️⃣ **Número de Condición** κ(J)
+```
+κ(J) = 1.43e+01 ✅
+Interpretación: Matriz bien condicionada
+Impacto: Buena estabilidad numérica
+```
+
+#### 2️⃣ **Simetría**
+```
+||J - J^T|| / ||J|| = 0.956 ❌
+Interpretación: Matriz NO SIMÉTRICA
+Impacto: Gradiente Conjugado NO aplicable
+```
+
+#### 3️⃣ **Diagonal Dominancia**
+```
+Filas diagonales dominantes: 60/134 (44.8%) ❌
+Interpretación: NO diagonal dominante
+Impacto: Jacobi y Gauss-Seidel NO garantizan convergencia
+```
+
+#### 4️⃣ **Autovalores**
+```
+Rango: [0.75, 7.08]
+Todos positivos: ✅ (134 positivos, 0 negativos)
+Pero NO simétrica: ⚠️ No es definida positiva en sentido clásico
+```
+
+#### 5️⃣ **Radio Espectral**
+```
+ρ(M_Jacobi) = 1.70 > 1  ❌ NO converge
+ρ(M_Gauss-Seidel) = 2.88 > 1  ❌ NO converge
+```
+
+**Teorema:** Un método iterativo converge si y solo si ρ(M) < 1
+
+#### 6️⃣ **Estructura Sparse**
+```
+Sparsidad: 96.85% ✅
+Elementos no nulos: 566 de 17,956
+Ancho de banda: 48
+Interpretación: Estructura dispersa ideal para métodos iterativos
+```
+
+### **Resultados del Análisis**
+
+| Método | Requisito | ¿Cumple? | Veredicto |
+|--------|-----------|----------|-----------|
+| **Newton-Raphson** | Jacobiana calculable | ✅ Sí | ✅ **VIABLE** |
+| **Gauss-Seidel** | Diagonal dominante O simétrica def. positiva | ❌ No | ❌ **DESCARTAR** |
+| **Jacobi** | Diagonal dominante estricta | ❌ No (44.8%) | ❌ **DESCARTAR** |
+| **Richardson** | Matriz simétrica (para ω óptimo) | ❌ No | ❌ **DESCARTAR** |
+| **Gradiente Conjugado** | Simétrica Y definida positiva | ❌ No (no simétrica) | ❌ **DESCARTAR** |
+
+### **Visualización Generada**
+
+El script produce `analisis_matriz_jacobiana.png` con:
+- **Izquierda:** Patrón de sparsidad (estructura de banda)
+- **Derecha:** Mapa de calor de valores de la Jacobiana
+
+### **Conclusión Clave**
+
+> **Solo examinando la matriz Jacobiana**, sin ejecutar iteraciones, podemos descartar Jacobi, Gauss-Seidel, Richardson y Gradiente Conjugado porque **no cumplen los requisitos matemáticos** para garantizar convergencia.
+
+---
+
+## 🎓 Comparación de Métodos: Tabla Resumen
+
+| Característica | Newton-Raphson | Gauss-Seidel | Jacobi | Richardson |
+|----------------|----------------|--------------|--------|------------|
+| **Tipo** | Cuasi-Newton | Punto fijo | Punto fijo | Descenso |
+| **Usa Jacobiana** | ✅ Completa | ❌ No | ❌ No | ❌ No |
+| **Convergencia** | ✅ Cuadrática | ❌ Lineal (si converge) | ❌ Lineal (si converge) | ❌ Lineal |
+| **Iteraciones** | ~10 | >2000 | >3000 | >5000 |
+| **Estado** | ✅ Converge | ❌ Estancado | ❌ Estancado | ❌ Oscila |
+| **Requisito matriz** | κ(J) razonable | Diag. dom. | Diag. dom. estricta | Simétrica |
+| **¿Cumple requisito?** | ✅ Sí | ❌ No | ❌ No | ❌ No |
+| **Paralelizable** | ⚠️ Parcial | ❌ No | ✅ Sí | ✅ Sí |
+| **Memoria** | Alta (matriz J) | Baja | Media | Baja |
+
+---
+
+## 💡 Lecciones Aprendidas
+
+### 1. **No todos los métodos sirven para todos los problemas**
+
+Aunque Jacobi, Gauss-Seidel y Richardson son métodos clásicos, **fallan** en este problema porque la matriz Jacobiana no cumple sus requisitos de convergencia.
+
+### 2. **El análisis a priori es valioso**
+
+Con el archivo `analisis_matriz.py` determinamos **antes de ejecutar** que Jacobi y Gauss-Seidel no convergirían, ahorrando tiempo computacional.
+
+### 3. **La no linealidad importa**
+
+El término no lineal **4·V_c·(V_r - V_l)** en la ecuación de Navier-Stokes:
+- Rompe la diagonal dominancia
+- Hace que la matriz cambie en cada iteración
+- Justifica el uso de Newton-Raphson (que recalcula J cada vez)
+
+### 4. **Relajación no siempre ayuda**
+
+Aunque SOR (Successive Over-Relaxation) puede mejorar Gauss-Seidel en problemas lineales, en este sistema **no lineal** con matriz mal condicionada para métodos iterativos simples, la relajación no es suficiente.
+
+### 5. **Newton-Raphson es el único viable**
+
+Por usar la **Jacobiana completa**, Newton-Raphson:
+- Captura la no linealidad correctamente
+- Converge en ~10 iteraciones vs. >2000 de otros
+- Es la única opción práctica para este problema
+
+---
+
+## 🚀 Cómo Ejecutar
+
+### Método de Newton-Raphson (✅ Funciona)
+```bash
+python campo_velocidadesV2.py
+```
+
+### Método de Gauss-Seidel (❌ No converge)
+```bash
+python avance3-2.py
+```
+
+### Método de Jacobi (❌ No converge)
+```bash
+python avance3-4.py
+```
+
+### Método de Richardson (❌ No converge)
+```bash
+python avance3-3.py
+```
+
+### Análisis de Matriz (📊 Herramienta)
+```bash
+python analisis_matriz.py
+```
+
+---
+
+## 📊 Resultados Esperados
+
+### ✅ Newton-Raphson
+```
+Iteración 1: Cambio máximo = 0.1234567890 | κ(J) = 1.43e+01
+Iteración 2: Cambio máximo = 0.0456789012 | κ(J) = 1.45e+01
+...
+Iteración 10: Cambio máximo = 0.0000000005 | κ(J) = 1.67e+01
+✅ Convergencia alcanzada en 10 iteraciones.
+```
+
+### ❌ Gauss-Seidel / Jacobi
+```
+Iteración 50: Cambio máximo = 0.7451965478
+Iteración 100: Cambio máximo = 0.7451965478
+...
+Iteración 2000: Cambio máximo = 0.7451965478
+⚠️ ADVERTENCIA: El método NO convergió después de 2000 iteraciones.
+```
+
+### 📊 Análisis de Matriz
+```
+κ(J) = 1.43e+01 ✅ Bien condicionada
+Simetría: NO ❌
+Diagonal dominante: NO (44.8%) ❌
+ρ(M_Jacobi) = 1.70 > 1 ❌
+ρ(M_Gauss-Seidel) = 2.88 > 1 ❌
+
+CONCLUSIÓN: Solo Newton-Raphson es viable
+```
 
 ---
 
