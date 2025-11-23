@@ -7,7 +7,7 @@ from numpy.linalg import cond
 # --- PARÁMETROS GLOBALES Y GEOMETRÍA ---
 NY, NX = 5, 50      # Filas (y=altura) x Columnas (x=ancho)
 H = 8               # Paso de celda (h)
-VY_TEST = 0.0       # Valor de V_y (vorticidad/convección vertical)
+VY_TEST = 0.1       # Valor de V_y (vorticidad/convección vertical)
 V0_INITIAL = 1.0    # Velocidad de entrada (valor de color 1.0)
 
 # --- PARÁMETROS DEL MÉTODO HÍBRIDO ---
@@ -15,7 +15,7 @@ MAX_ITER_NEWTON = 30        # Newton-Raphson construye Jacobiana y obtiene soluc
 TOLERANCE_NEWTON = 1e-8     # Tolerancia para Newton-Raphson
 MAX_ITER_ITERATIVO = 5000   # Iteraciones del método iterativo sobre la matriz Jacobiana
 TOLERANCE_ITERATIVO = 1e-8  # Tolerancia para método iterativo
-METODO_ITERATIVO = "gauss-seidel" # ← CAMBIO: Ahora usa Gauss-Seidel
+METODO_ITERATIVO = "jacobi" # Opciones: "jacobi" o "gauss-seidel"
 
 # --- DEFINICIÓN DE LAS VIGAS (USANDO ÍNDICES BASE 0) ---
 # Viga Inferior (j=0, 1; i=20 a 29)
@@ -173,6 +173,50 @@ class FlujoHibrido:
         print(f"\n  ⚠️ Newton-Raphson no convergió en {max_iter} iteraciones.")
         return V_matrix, False
 
+    def iteracion_jacobi_matriz(self, J_matrix, b_vector, V_inicial, max_iter, tolerance):
+        """Método de Jacobi PURO aplicado al sistema lineal J·V = b.
+        
+        Iteración de Jacobi: V^(k+1) = D^(-1) * (b - (L+U)*V^k)
+        donde J = D + L + U (diagonal + triangular inferior + triangular superior)
+        """
+        print("\n" + "="*70)
+        print(f"FASE 2: MÉTODO DE JACOBI PURO SOBRE LA MATRIZ JACOBIANA")
+        print("="*70)
+        print("Resolviendo J·V = b usando iteración de Jacobi (sin relajación)")
+        print("donde J es la Jacobiana del sistema no lineal.\n")
+        
+        # Convertir a formato denso para manipulación
+        J_dense = J_matrix.toarray()
+        V_k = V_inicial.copy()
+        
+        # Extraer diagonal D, parte inferior L, y parte superior U
+        D = np.diag(np.diag(J_dense))
+        D_inv = np.diag(1.0 / np.diag(J_dense))  # Inversa de D
+        L_plus_U = J_dense - D  # L + U
+        
+        for k in range(1, max_iter + 1):
+            # Jacobi: V^(k+1) = D^(-1) * (b - (L+U)*V^k)
+            V_k_new = D_inv @ (b_vector - L_plus_U @ V_k)
+            
+            # Calcular cambio
+            cambio = np.linalg.norm(V_k_new - V_k)
+            max_cambio = np.max(np.abs(V_k_new - V_k))
+            
+            # Actualizar
+            V_k = V_k_new
+            
+            # Imprimir progreso
+            if k % 100 == 0 or cambio < tolerance:
+                residuo = np.linalg.norm(J_dense @ V_k - b_vector)
+                print(f"  Iteración {k}: ||V^(k+1)-V^k|| = {cambio:.6e} | max|ΔV| = {max_cambio:.6e} | ||J·V-b|| = {residuo:.6e}")
+            
+            if cambio < tolerance:
+                print(f"\n  ✅ Jacobi convergió en {k} iteraciones.")
+                return V_k, True
+        
+        print(f"\n  ⚠️ Jacobi no convergió en {max_iter} iteraciones.")
+        return V_k, False
+
     def iteracion_gauss_seidel_matriz(self, J_matrix, b_vector, V_inicial, max_iter, tolerance):
         """Método de Gauss-Seidel PURO aplicado al sistema lineal J·V = b.
         
@@ -220,14 +264,14 @@ class FlujoHibrido:
         return V_k, False
 
     def solve_hibrido(self):
-        """Método híbrido: Newton-Raphson construye J → Gauss-Seidel sobre J·V=b."""
+        """Método híbrido: Newton-Raphson construye J → Método iterativo sobre J·V=b."""
         print("\n" + "="*70)
-        print("MÉTODO HÍBRIDO: NEWTON-RAPHSON → GAUSS-SEIDEL SOBRE JACOBIANA")
+        print("MÉTODO HÍBRIDO: NEWTON-RAPHSON → MÉTODO ITERATIVO SOBRE JACOBIANA")
         print("="*70)
         print(f"Estrategia:")
         print(f"  1. Newton-Raphson converge y obtiene solución V* (hasta {MAX_ITER_NEWTON} iter)")
         print(f"  2. Se construye sistema lineal J·V = b en el punto V*")
-        print(f"  3. Gauss-Seidel PURO resuelve J·V = b sin relajación")
+        print(f"  3. Método iterativo PURO ({METODO_ITERATIVO.upper()}) resuelve J·V = b sin relajación")
         print(f"\nNúmero total de incógnitas: {self.N_INCÓGNITAS}")
         
         V_matrix = self.V_k.copy()
@@ -254,16 +298,25 @@ class FlujoHibrido:
         print("="*70)
         print("Usando la solución de Newton-Raphson para construir J y b...")
         J_final, F_final = self.ensamblar_sistema_newton(V_matrix)
+        b_vector = -F_final  # En Newton-Raphson: J·ΔV = -F, pero aquí queremos J·V = b
         # El vector b correcto es: b = J·V_nr (para que J·V = b tenga solución V = V_nr)
         b_vector = J_final @ V_nr_vector
         
         print(f"✅ Sistema construido: J({self.N_INCÓGNITAS}×{self.N_INCÓGNITAS})·V = b")
         print(f"   Usando V* de Newton-Raphson como condición inicial para iteración")
         
-        # FASE 2: Gauss-Seidel sobre la matriz Jacobiana
-        V_iter_vector, iter_converged = self.iteracion_gauss_seidel_matriz(
-            J_final, b_vector, V_nr_vector, MAX_ITER_ITERATIVO, TOLERANCE_ITERATIVO
-        )
+        # FASE 2: Método iterativo sobre la matriz Jacobiana
+        if METODO_ITERATIVO == "jacobi":
+            V_iter_vector, iter_converged = self.iteracion_jacobi_matriz(
+                J_final, b_vector, V_nr_vector, MAX_ITER_ITERATIVO, TOLERANCE_ITERATIVO
+            )
+        elif METODO_ITERATIVO == "gauss-seidel":
+            V_iter_vector, iter_converged = self.iteracion_gauss_seidel_matriz(
+                J_final, b_vector, V_nr_vector, MAX_ITER_ITERATIVO, TOLERANCE_ITERATIVO
+            )
+        else:
+            print(f"❌ Método '{METODO_ITERATIVO}' no reconocido")
+            return V_matrix
         
         # Reconstruir matriz de velocidades
         V_final_matrix = V_matrix.copy()
@@ -288,9 +341,9 @@ class FlujoHibrido:
         
         print(f"📊 Número de condición de la Jacobiana: {numero_condicion:.2e}")
         print(f"📊 Norma del residuo final ||F||: {norma_residuo_final:.6e}")
-        print(f"📊 Diferencia ||V_gauss_seidel - V_newton||: {diferencia:.6e}")
+        print(f"📊 Diferencia ||V_iterativo - V_newton||: {diferencia:.6e}")
         print(f"📊 Newton-Raphson: {'✅ Convergió' if nr_converged else '❌ No convergió'}")
-        print(f"📊 Gauss-Seidel: {'✅ Convergió' if iter_converged else '⚠️ No convergió'}")
+        print(f"📊 {METODO_ITERATIVO.capitalize()}: {'✅ Convergió' if iter_converged else '⚠️ No convergió'}")
         
         if nr_converged and iter_converged:
             print(f"\n✅ ÉXITO: Ambos métodos convergieron.")
@@ -322,7 +375,7 @@ def plot_solution(V_final, vy_value):
                               VIGA_SUP_Y_MAX - VIGA_SUP_Y_MIN, 
                               color='red', alpha=0.8, fill=True))
 
-    ax.set_title(f'Solución Final (Método Híbrido: N-R → Gauss-Seidel sobre J) | Vy={vy_value}')
+    ax.set_title(f'Solución Final (Método Híbrido: N-R → {METODO_ITERATIVO.capitalize()} sobre J) | Vy={vy_value}')
     ax.set_xlabel('Índice de Columna (x)')
     ax.set_ylabel('Índice de Fila (y)')
     ax.set_xticks(range(0, NX + 1, 5))
